@@ -103,17 +103,16 @@
     function toZulu(dtLocal) {
       if (!dtLocal) return null;
       try {
-        // dtLocal like "2025-11-04T07:10"
         const d = new Date(dtLocal);
         return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().replace(/\.\d{3}Z$/, 'Z');
       } catch { return null; }
     }
 
-    const API_URL = "https://fwibudt1t6.execute-api.us-east-2.amazonaws.com/default/trade"; // <-- replace with your API Gateway invoke URL
+    const API_URL = "https://fwibudt1t6.execute-api.us-east-2.amazonaws.com/default/trade";
 
     document.getElementById('tradeForm').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const msg = document.getElementById('msg'); msg.textContent = 'Saving…';
+      const msg = document.getElementById('msg'); msg.textContent = 'Saving…'; msg.className = '';
 
       const acctId = document.getElementById('acctId').value.trim();
       const symbol = document.getElementById('symbol').value.trim().toUpperCase();
@@ -134,11 +133,17 @@
       const sortKey = `${openedAt}#${tradeId}`;
       const exitPrice = exitPriceRaw === "" ? 0 : Number(exitPriceRaw);
 
+      // -------- PATCH: send PK/SK explicitly (table keys), keep the rest unchanged --------
       const payload = {
-        acctId, tradeId, sortKey,
-        symbol, direction, qty, entryPrice, exitPrice, status, strategy,
+        PK: acctId,             // <-- table partition key
+        SK: sortKey,            // <-- table sort key
+        // (you can also include the old names if you want)
+        // acctId, sortKey,
+
+        tradeId, symbol, direction, qty, entryPrice, exitPrice, status, strategy,
         openedAt, closedAt, notes
       };
+      // -------------------------------------------------------------------------------
 
       try {
         const res = await fetch(API_URL, {
@@ -146,21 +151,27 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
+
+        const text = await res.text();
+        let data;
+        try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
+        if (!res.ok) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+
         msg.textContent = `Saved trade ${data.tradeId || tradeId}`;
         msg.className = 'ok';
       } catch (err) {
         msg.textContent = `Error: ${err.message}`;
         msg.className = 'err';
+        console.error(err);
       }
     });
 
     document.getElementById('resetBtn').addEventListener('click', () => {
       document.getElementById('tradeForm').reset();
-      document.getElementById('msg').textContent = '';
-      document.getElementById('msg').className = '';
+      const msg = document.getElementById('msg'); msg.textContent = ''; msg.className = '';
     });
   </script>
 </body>
 </html>
+
