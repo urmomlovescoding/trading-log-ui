@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Trade Logger</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
+    form { display: grid; gap: 12px; }
+    label { font-weight: 600; }
+    input, select, textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 8px; }
+    button { padding: 10px 14px; border: 0; border-radius: 10px; font-weight: 700; cursor: pointer; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .ok { background: #11a36a; color:#fff; }
+    .warn { background: #e09f1f; color:#111; }
+    .err { background: #c62828; color:#fff; }
+    .card { background:#f8f9fa; padding:16px; border:1px solid #e6e6e6; border-radius:12px; }
+  </style>
+</head>
+<body>
+  <h1>Trade Logger</h1>
+  <div class="card">
+    <form id="tradeForm">
+      <div class="row">
+        <div>
+          <label for="acctId">Account ID</label>
+          <input id="acctId" name="acctId" required placeholder="acct#A123" value="acct#A123" />
+        </div>
+        <div>
+          <label for="symbol">Symbol</label>
+          <input id="symbol" name="symbol" required placeholder="e.g., NVDA" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="direction">Direction</label>
+          <select id="direction" name="direction" required>
+            <option value="">Select…</option>
+            <option value="LONG">LONG</option>
+            <option value="SHORT">SHORT</option>
+          </select>
+        </div>
+        <div>
+          <label for="qty">Quantity</label>
+          <input id="qty" name="qty" type="number" step="any" required placeholder="e.g., 100" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="entryPrice">Entry Price</label>
+          <input id="entryPrice" name="entryPrice" type="number" step="0.0001" required placeholder="e.g., 123.45" />
+        </div>
+        <div>
+          <label for="exitPrice">Exit Price (optional)</label>
+          <input id="exitPrice" name="exitPrice" type="number" step="0.0001" placeholder="0 = not closed" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="status">Status</label>
+          <select id="status" name="status" required>
+            <option value="OPEN">OPEN</option>
+            <option value="CLOSED">CLOSED</option>
+          </select>
+        </div>
+        <div>
+          <label for="strategy">Strategy (optional)</label>
+          <input id="strategy" name="strategy" placeholder="e.g., breakout" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="openedAt">Opened At (UTC)</label>
+          <input id="openedAt" name="openedAt" type="datetime-local" />
+        </div>
+        <div>
+          <label for="closedAt">Closed At (UTC, optional)</label>
+          <input id="closedAt" name="closedAt" type="datetime-local" />
+        </div>
+      </div>
+
+      <div>
+        <label for="notes">Notes</label>
+        <textarea id="notes" name="notes" rows="3" placeholder="Optional notes"></textarea>
+      </div>
+
+      <button class="ok" type="submit">Save Trade</button>
+      <button class="warn" type="button" id="resetBtn">Reset</button>
+      <div id="msg" role="status" style="margin-top:8px;"></div>
+    </form>
+  </div>
+
+  <script>
+    // Minimal ULID-ish unique id (timestamp + random suffix)
+    function uid() {
+      return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+    }
+    // Convert datetime-local (no timezone) to Zulu
+    function toZulu(dtLocal) {
+      if (!dtLocal) return null;
+      try {
+        // dtLocal like "2025-11-04T07:10"
+        const d = new Date(dtLocal);
+        return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().replace(/\.\d{3}Z$/, 'Z');
+      } catch { return null; }
+    }
+
+    const API_URL = "https://fwibudt1t6.execute-api.us-east-2.amazonaws.com/default/trade"; // <-- replace with your API Gateway invoke URL
+
+    document.getElementById('tradeForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById('msg'); msg.textContent = 'Saving…';
+
+      const acctId = document.getElementById('acctId').value.trim();
+      const symbol = document.getElementById('symbol').value.trim().toUpperCase();
+      const direction = document.getElementById('direction').value;
+      const qty = Number(document.getElementById('qty').value);
+      const entryPrice = Number(document.getElementById('entryPrice').value);
+      const exitPriceRaw = document.getElementById('exitPrice').value;
+      const status = document.getElementById('status').value;
+      const strategy = document.getElementById('strategy').value || null;
+      const openedAtLocal = document.getElementById('openedAt').value;
+      const closedAtLocal = document.getElementById('closedAt').value;
+      const notes = document.getElementById('notes').value || null;
+
+      const openedAt = openedAtLocal ? toZulu(openedAtLocal) : new Date().toISOString();
+      const closedAt = closedAtLocal ? toZulu(closedAtLocal) : null;
+
+      const tradeId = uid();
+      const sortKey = `${openedAt}#${tradeId}`;
+      const exitPrice = exitPriceRaw === "" ? 0 : Number(exitPriceRaw);
+
+      const payload = {
+        acctId, tradeId, sortKey,
+        symbol, direction, qty, entryPrice, exitPrice, status, strategy,
+        openedAt, closedAt, notes
+      };
+
+      try {
+        const res = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        msg.textContent = `Saved trade ${data.tradeId || tradeId}`;
+        msg.className = 'ok';
+      } catch (err) {
+        msg.textContent = `Error: ${err.message}`;
+        msg.className = 'err';
+      }
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      document.getElementById('tradeForm').reset();
+      document.getElementById('msg').textContent = '';
+      document.getElementById('msg').className = '';
+    });
+  </script>
+</body>
+</html>
